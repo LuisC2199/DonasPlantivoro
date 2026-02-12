@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // allow any signed in user to read admins allowlist (not write)
+    function adminEmails() {
+      return get(/databases/$(database)/documents/config/admins).data.emails;
+    }
+
+    function isAdminEmail() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/config/admins)
+        && (request.auth.token.email in get(/databases/$(database)/documents/config/admins).data.emails);
+    }
+
+    match /config/admins {
+      allow read: if isSignedIn();
+      allow write: if false; // manage from console only (simple + safe)
+    }
+
+    match /orders/{orderId} {
+      allow read, write: if isAdminEmail();
+    }
+
+    match /config/{docId} {
+      // keep other config admin-only
+      allow read, write: if isAdminEmail();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

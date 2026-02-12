@@ -1,0 +1,9 @@
+{
+  "projects": {
+    "default": "donas-plantivoro-1",
+    "donasdev": "donas-plantivoro-1",
+    "production": "donas-plantivoro-1"
+  },
+  "targets": {},
+  "etags": {}
+}
