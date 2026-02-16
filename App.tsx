@@ -934,7 +934,6 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
   };
 
   const copyMonthlySummary = async () => {
-    const IVA_RATE = 0.16; // ✅ MX default
 
     // orders already filtered from server by month + puntoVenta
     const filtered = orders;
@@ -956,8 +955,6 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
       n.toLocaleString("es-MX", { maximumFractionDigits: 0 });
 
     const ordersTotal = sorted.reduce((sum, o) => sum + (Number(o.precioTotal) || 0), 0);
-    const iva = Math.round(ordersTotal * IVA_RATE);
-    const totalConIva = ordersTotal + iva;
 
     // Helper to show flavors as "2 RED VELVET | 4 OREO"
     const flavorsForOrder = (o: Order) => {
@@ -980,8 +977,7 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
       `Punto de venta: ${pvLabel}`,
       ``,
       `Pedidos: ${sorted.length}`,
-      `Total (sin IVA): $${fmtMoney(ordersTotal)} MXN`,
-      `Total (con IVA): $${fmtMoney(totalConIva)} MXN`,
+      `Total: $${fmtMoney(ordersTotal)} MXN`,
       ``,
       `Detalle por pedido:`,
       ...sorted.map((o) => {
