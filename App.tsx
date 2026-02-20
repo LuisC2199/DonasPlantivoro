@@ -472,13 +472,15 @@ const OrderWizard = ({ publicConfig, seasonalSrc, isAdminWizard = false, }: { pu
     } else {
       setLoading(true);
       const { price, total } = calculateOrderPrice(data.tipoPedido!, data.puntoVenta, data.quantities as OrderQuantities);
+      const requestId = crypto?.randomUUID?.() ?? String(Date.now());
       const finalOrder: Order = {
         ...data as any,
         totalDonas: total,
         precioTotal: price,
         statusPagado: 'No pagado',
         statusOrder: 'Recibido',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        requestId,
       };
       
       try {
@@ -493,8 +495,27 @@ const OrderWizard = ({ publicConfig, seasonalSrc, isAdminWizard = false, }: { pu
         localStorage.removeItem('plantivoro_draft');
         setStep(5);
         window.scrollTo(0, 0);
-      } catch (e) {
-        alert('Error al crear pedido. Intenta de nuevo.');
+      } catch (e: any) {
+        console.error("submitOrder failed:", {
+          code: e?.code,
+          message: e?.message,
+          details: e?.details,
+          name: e?.name,
+        });
+
+        // Friendly mapping
+        const msg =
+          e?.code === "functions/failed-precondition" || e?.code === "functions/invalid-argument"
+            ? (e?.message || "Revisa los datos e intenta de nuevo.")
+            : e?.code === "functions/permission-denied"
+            ? "No tienes permiso para realizar esta acción."
+            : e?.code === "functions/unavailable"
+            ? "Servicio temporalmente no disponible. Intenta en 30 segundos."
+            : !navigator.onLine
+            ? "Sin conexión. Revisa tu internet e intenta de nuevo."
+            : "Error al crear pedido. Intenta de nuevo. (Código: ${requestId})`)";
+
+        alert(msg);
       } finally {
         setLoading(false);
       }
@@ -650,6 +671,14 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
       label: f.key === "seasonal" ? seasonalLabel : f.label,
     }));
   }, [seasonalLabel]);
+
+  const toLocalISODate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const normalizeISO = (s?: string) => (s ?? "").slice(0, 10); // handles "YYYY-MM-DDTHH..."
 
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -865,21 +894,26 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
   };
 
   const getFilteredOrders = () => {
+    // Hoy/Mañana already come filtered from the server
+    if (tab === "Hoy" || tab === "Mañana") return orders;
+
+    // Only apply client filtering for Todos (if you really want it)
     const now = new Date();
 
-    // Today (local time)
-    const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD
+    const toLocalISODate = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
 
-    // Tomorrow
+    const todayStr = toLocalISODate(now);
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
+    const tomorrowStr = toLocalISODate(tomorrow);
 
-    console.log("hoy:", todayStr);
-    console.log("mañana:", tomorrowStr);
-
-    if (tab === 'Hoy') return orders.filter(o => o.fechaEntrega === todayStr);
-    if (tab === 'Mañana') return orders.filter(o => o.fechaEntrega === tomorrowStr);
+    if (tab === "Todos") return orders; // no filtering here; your month filter already handles it
+    // (if you ever add "Hoy/Mañana" filtering for Todos view, put it here)
 
     return orders;
   };

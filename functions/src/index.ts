@@ -261,11 +261,36 @@ export const adminGetOrders = onCall(async (request) => {
       query = query.where("puntoVenta", "==", puntoVenta);
     }
 
-    const now = new Date();
-    const todayStr = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10);
-    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+    // ✅ NO timezone conversion
+    const toISODateLocal = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
 
+    const isoInTz = (date: Date, timeZone = "America/Mexico_City") => {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(date);
+
+      const y = parts.find(p => p.type === "year")?.value;
+      const m = parts.find(p => p.type === "month")?.value;
+      const d = parts.find(p => p.type === "day")?.value;
+
+      return `${y}-${m}-${d}`;
+    };
+
+    const now = new Date();
+    const todayStr = isoInTz(now, "America/Mexico_City");
+
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = isoInTz(tomorrow, "America/Mexico_City");
+    logger.info("adminGetOrders dates", { mode, todayStr, tomorrowStr });
     if (mode === "Hoy") {
       query = query.where("fechaEntrega", "==", todayStr);
     } else if (mode === "Mañana") {
@@ -274,8 +299,8 @@ export const adminGetOrders = onCall(async (request) => {
       if (data.month && /^\d{4}-\d{2}$/.test(data.month)) {
         const [yy, mm] = data.month.split("-").map(Number);
         const start = `${data.month}-01`;
-        const next = new Date(yy, mm, 1);
-        const nextMonthStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`;
+        const next = new Date(yy, mm, 1); // mm is 1-12, Date expects 0-11; BUT here mm is 2 for Feb, so this is actually next month already ✅
+        const nextMonthStr = toISODateLocal(next);
 
         query = query
           .where("fechaEntrega", ">=", start)
@@ -287,7 +312,15 @@ export const adminGetOrders = onCall(async (request) => {
     }
 
     const snap = await query.get();
+
     const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    // Optional: log bad docs once so you can clean data
+    const missing = orders.filter((o: any) => !o.fechaEntrega);
+    if (missing.length) {
+      logger.warn("Orders missing fechaEntrega", { count: missing.length, ids: missing.map((x: any) => x.id) });
+    }
+
     return { orders };
   } catch (err: any) {
     logger.error("adminGetOrders failed", { message: err?.message, code: err?.code, stack: err?.stack });
