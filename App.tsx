@@ -866,20 +866,17 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
 
   const getFilteredOrders = () => {
     const now = new Date();
-    // 12 PM cutoff
-    const cutoffHour = 12;
-    const operationalToday = new Date(now);
 
-    if (now.getHours() >= cutoffHour) {
-      operationalToday.setDate(operationalToday.getDate() + 1);
-    }
-    const todayStr = operationalToday.toLocaleDateString('en-CA'); // YYYY-MM-DD format
-    const operationalTomorrow = new Date(operationalToday);
-    operationalTomorrow.setDate(operationalTomorrow.getDate() + 1);
-    const tomorrowStr = operationalTomorrow.toLocaleDateString('en-CA');
+    // Today (local time)
+    const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD
 
-    console.log("operational hoy:", todayStr);
-    console.log("operational mañana:", tomorrowStr);
+    // Tomorrow
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
+
+    console.log("hoy:", todayStr);
+    console.log("mañana:", tomorrowStr);
 
     if (tab === 'Hoy') return orders.filter(o => o.fechaEntrega === todayStr);
     if (tab === 'Mañana') return orders.filter(o => o.fechaEntrega === tomorrowStr);
@@ -1300,7 +1297,19 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
                         )}
                       </div>
                     </div>
-
+                    {/* PICKUP POINT (only for Personal) */}
+                    {o.tipoPedido === "Personal" && o.puntoRecoleccion && (
+                      <div className={`${isKitchenMode ? "mb-6" : "mb-5"}`}>
+                        <div className="inline-flex items-center gap-2 max-w-full px-4 py-2 rounded-2xl bg-stone-50 border border-stone-200">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                            Recolección
+                          </span>
+                          <span className="text-sm font-black text-stone-900 truncate max-w-[18rem] sm:max-w-[26rem]">
+                            {o.puntoRecoleccion}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                     {/* FLAVORS */}
                     <div className={`flex flex-wrap ${isKitchenMode ? "gap-4 mb-7" : "gap-3 mb-6"}`}>
                       {entries.map(([k, qty]) => {
