@@ -71,7 +71,7 @@ export const HORARIOS_RECOLECCION: Record<string, string[]> = {
 
 export const PUNTOS_VENTA = [
   "Café Canta'o", "Cafetería Ikbel", "Café Seroga", "Deju Café", 
-  "El Plantívoro", "JC La Loma", "Karma Healthy Bar", 
+  "El Plantívoro", "JC La Loma", "Karen Donas", "Karma Healthy Bar", 
   "Sattva", "Mocao", "Tipi'Oka Lomas", "Vegandra", "Wholejuice"
 ];
 

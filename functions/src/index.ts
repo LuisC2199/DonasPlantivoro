@@ -122,11 +122,26 @@ export const submitOrder = onCall(async (request) => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fechaEntrega);
   if (!match) throw new HttpsError("invalid-argument", "fechaEntrega debe ser YYYY-MM-DD");
 
-  const [_, y, m, d] = match;
-  const selected = new Date(Number(y), Number(m) - 1, Number(d)); // local midnight
+  const isoDateInTz = (date: Date, timeZone = "America/Mexico_City") => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+
+    const y = parts.find(p => p.type === "year")?.value;
+    const m = parts.find(p => p.type === "month")?.value;
+    const d = parts.find(p => p.type === "day")?.value;
+
+    return `${y}-${m}-${d}`;
+  };
 
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStr = isoDateInTz(now); // CDMX today (strict midnight CDMX)
+
+  // fechaEntrega is already YYYY-MM-DD
+  const selectedStr = fechaEntrega;
 
   // ✅ admin override (only if caller is admin)
   let isAdmin = false;
@@ -140,12 +155,18 @@ export const submitOrder = onCall(async (request) => {
   const allowSunday = Boolean(data?.adminOverrides?.allowSunday) && isAdmin;
   const allowPastDates = Boolean(data?.adminOverrides?.allowPastDates) && isAdmin;
 
-  if (!allowSunday && selected.getDay() === 0) {
-    throw new HttpsError("invalid-argument", "No recibimos pedidos en domingo.");
+  if (!allowSunday) {
+    const dayOfWeek = new Date(fechaEntrega + "T00:00:00-06:00").getDay();
+    if (dayOfWeek === 0) {
+      throw new HttpsError("invalid-argument", "No recibimos pedidos en domingo.");
+    }
   }
 
-  if (!allowPastDates && selected <= today) {
-    throw new HttpsError("invalid-argument", "El pedido debe ser solicitado con al menos un día de anticipación.");
+  if (!allowPastDates && selectedStr <= todayStr) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El pedido debe ser solicitado con al menos un día de anticipación."
+    );
   }
 
   // ✅ Blocked date ranges (from config/app)
