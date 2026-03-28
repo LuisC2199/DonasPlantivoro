@@ -1342,6 +1342,16 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
                             {o.puntoRecoleccion}
                           </span>
                         </div>
+                        {o.telefono && (
+                          <div className="inline-flex items-center gap-2 max-w-full px-4 py-2 rounded-2xl bg-stone-50 border border-stone-200">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                              Teléfono
+                            </span>
+                            <span className="text-sm font-black text-stone-900 truncate max-w-[18rem] sm:max-w-[26rem]">
+                              {o.telefono}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                     {/* FLAVORS */}
