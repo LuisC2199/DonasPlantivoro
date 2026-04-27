@@ -356,12 +356,12 @@ const Step5 = ({ orderId, data, flavors, }: { orderId: string; data: Partial<Ord
           <div className="space-y-3 text-sm text-[#40068B] font-bold">
             <div className="flex justify-between"><span>Banco:</span> <span className="text-stone-800">BANREGIO</span></div>
             <div className="flex justify-between"><span>Tarjeta:</span> <span className="text-stone-800">4741 7429 3582 7066</span></div>
-            <div className="flex justify-between"><span>CLABE:</span> <span className="text-stone-800">058597000059029937</span></div>
+            <div className="flex justify-between"><span>CLABE:</span> <span className="text-stone-800">167700000059029932</span></div>
             <div className="flex justify-between"><span>Titular:</span> <span className="text-stone-800">HAYDEÉ CHOWELL GONZÁLEZ</span></div>
           </div>
           
           <div className="grid gap-2 pt-2">
-            <Button variant="outline" size="sm" className="bg-white border-[#40068B]/20 text-[#40068B]" onClick={() => copyToClipboard('058597000059029937', 'CLABE')}>
+            <Button variant="outline" size="sm" className="bg-white border-[#40068B]/20 text-[#40068B]" onClick={() => copyToClipboard('167700000059029932', 'CLABE')}>
               Copiar CLABE
             </Button>
             <Button variant="outline" size="sm" className="bg-white border-[#40068B]/20 text-[#40068B]" onClick={() => copyToClipboard('4741 7429 3582 7066', 'No. Tarjeta')}>
