@@ -1,4 +1,4 @@
-import { Order, OrderQuantities, TipoPedido } from "./types";
+import { CostingData, CostingIngredientHistoryEntry, Order, OrderQuantities, TipoPedido } from "./types";
 import { PRICING_RULES } from "./constants";
 import { functions } from "./firebase";
 import { httpsCallable } from "firebase/functions";
@@ -121,6 +121,7 @@ export type PublicConfig = {
     message: string;
     ranges: Array<{ start: string; end: string }>;
   };
+  puntosVenta: string[];
 };
 
 export const getPublicConfig = async () => {
@@ -159,6 +160,27 @@ export const adminMe = async () => {
   return res.data as { isAdmin: boolean; email: string };
 };
 
+export const adminGetCostingData = async () => {
+  const fn = httpsCallable(functions, "adminGetCostingData");
+  const res = await fn();
+  return res.data as { costing: CostingData | null };
+};
 
+export const adminImportCostingData = async (costing: CostingData) => {
+  const fn = httpsCallable(functions, "adminImportCostingData");
+  const res = await fn(costing);
+  return res.data as { ok: boolean; costing: CostingData };
+};
 
+export const adminSaveCostingData = async (costing: CostingData) => {
+  const fn = httpsCallable(functions, "adminSaveCostingData");
+  const res = await fn(costing);
+  return res.data as { ok: boolean; costing: CostingData };
+};
+
+export const adminGetIngredientCostHistory = async (ingredientId: string) => {
+  const fn = httpsCallable(functions, "adminGetIngredientCostHistory");
+  const res = await fn({ ingredientId });
+  return res.data as { history: CostingIngredientHistoryEntry[] };
+};
 

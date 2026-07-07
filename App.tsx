@@ -12,6 +12,7 @@ import AdminDenied from "./auth/pages/admin/AdminDenied";
 import { isValidEmail, isValidPhone } from "./utils/validation";
 import ConfigPopup from "./components/ConfigPopup";
 import EditOrderModal from "./components/EditOrderModal";
+import AdminCosting from "./pages/AdminCosting";
 import AdminStats from "./pages/AdminStats";
 import Toast from "./components/Toast";
 import * as XLSX from "xlsx";
@@ -221,7 +222,7 @@ const Step3 = ({
   );
 };
 
-const Step4 = ({ data, update }: { data: Partial<Order>, update: (u: Partial<Order>) => void }) => {
+const Step4 = ({ data, update, ventaOptions }: { data: Partial<Order>, update: (u: Partial<Order>) => void, ventaOptions: string[] }) => {
   const isPersonal = data.tipoPedido === 'Personal';
   const selectedPunto = isPersonal ? data.puntoRecoleccion : null;
 
@@ -300,7 +301,7 @@ const Step4 = ({ data, update }: { data: Partial<Order>, update: (u: Partial<Ord
               className="w-full p-4 rounded-2xl bg-stone-50 border border-stone-100 outline-none focus:ring-4 focus:ring-[#28CD7E]/20 transition-all appearance-none font-bold"
             >
               <option value="">Selecciona una opción</option>
-              {(isPersonal ? PUNTOS_RECOLECCION : PUNTOS_VENTA).map(opt => (
+              {(isPersonal ? PUNTOS_RECOLECCION : ventaOptions).map(opt => (
                 <option key={opt} value={opt}>{opt}</option>
               ))}
             </select>
@@ -421,6 +422,10 @@ const OrderWizard = ({ publicConfig, seasonalSrc, isAdminWizard = false, }: { pu
   });
   const seasonalLabel = publicConfig.seasonalLabel;
   const blocked = publicConfig.blocked;
+
+  const ventaOptions = (publicConfig?.puntosVenta && publicConfig.puntosVenta.length > 0)
+  ? publicConfig.puntosVenta
+  : PUNTOS_VENTA;
 
   useEffect(() => {
     localStorage.setItem('plantivoro_draft', JSON.stringify(data));
@@ -543,7 +548,7 @@ const OrderWizard = ({ publicConfig, seasonalSrc, isAdminWizard = false, }: { pu
             flavors={flavors}
           />
         )}
-        {step === 4 && <Step4 data={data} update={update} />}
+        {step === 4 && <Step4 data={data} update={update} ventaOptions={ventaOptions} />}
         {step === 5 && <Step5 orderId={orderId} data={data} flavors={flavors}/>}
       </main>
 
@@ -578,6 +583,7 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
   const [tab, setTab] = useState<'Hoy' | 'Mañana' | 'Todos'>('Hoy');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draftSeasonalLabel, setDraftSeasonalLabel] = useState("");
+  const [draftPuntosVenta, setDraftPuntosVenta] = useState<string[]>(() => publicConfig?.puntosVenta ?? []);
   const [draftBlockedEnabled, setDraftBlockedEnabled] = useState(false);
   const [draftBlockedMessage, setDraftBlockedMessage] = useState("");
   const [draftBlockedRanges, setDraftBlockedRanges] = useState<Array<{start:string; end:string}>>([]);
@@ -1081,6 +1087,7 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
               variant="outline"
               onClick={() => {    
                 setDraftSeasonalLabel(publicConfig.seasonalLabel || "Seasonal");
+                setDraftPuntosVenta(publicConfig.puntosVenta ?? []);
                 setDraftBlockedEnabled(Boolean(publicConfig.blocked?.enabled));
                 setDraftBlockedMessage(publicConfig.blocked?.message || "Estas fechas están bloqueadas. Elige otra fecha 🙏");
                 setDraftBlockedRanges(publicConfig.blocked?.ranges || []);
@@ -1095,6 +1102,11 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
             <Link to="/admin/stats" className="inline-flex">
               <Button variant="outline" size="sm">
                 Estadísticas
+              </Button>
+            </Link>
+            <Link to="/admin/costeo" className="inline-flex">
+              <Button variant="outline" size="sm">
+                Costeo
               </Button>
             </Link>
             <Button
@@ -1186,7 +1198,7 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
                 className="w-56 h-11 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none focus:ring-4 focus:ring-[#28CD7E]/20"
               >
                 <option value="ALL">Todos los puntos</option>
-                {PUNTOS_VENTA.map((pv) => (
+                {(publicConfig.puntosVenta && publicConfig.puntosVenta.length > 0 ? publicConfig.puntosVenta : PUNTOS_VENTA).map((pv) => (
                   <option key={pv} value={pv}>
                     {pv}
                   </option>
@@ -1459,6 +1471,8 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
             open={isConfigOpen}
             saving={savingConfig}
             onClose={() => setIsConfigOpen(false)}
+            puntosVenta={draftPuntosVenta}
+            setPuntosVenta={setDraftPuntosVenta}
             seasonalLabelInput={draftSeasonalLabel}
             setSeasonalLabelInput={setDraftSeasonalLabel}
             blockedEnabled={draftBlockedEnabled}
@@ -1478,6 +1492,7 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
                     message: draftBlockedMessage.trim(),
                     ranges: draftBlockedRanges,
                   },
+                  puntosVenta: draftPuntosVenta.map(s => s.trim()).filter(Boolean),
                 });
                 await refreshConfig();
 
@@ -1579,6 +1594,14 @@ export default function App() {
           }
         />
         <Route
+          path="/admin/costeo"
+          element={
+            <RequireAdmin>
+              <AdminCosting />
+            </RequireAdmin>
+          }
+        />
+        <Route
           path="/admin/order"
           element={
             <RequireAdmin>
@@ -1595,5 +1618,3 @@ export default function App() {
     </Router>
   );
 }
-
-

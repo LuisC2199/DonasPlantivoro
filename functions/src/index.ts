@@ -41,6 +41,89 @@ type AdminOverrides = {
 
 type BlockRange = { start: string; end: string };
 
+type CostingSection = "receta" | "glaseado";
+
+type CostingIngredient = {
+  id: string;
+  nombre: string;
+  unidad: string;
+  unidadesPorEnvase: number;
+  costoEnvase: number;
+  costoUnidad: number;
+  proveedor?: string;
+  marca?: string;
+};
+
+type CostingIngredientHistoryEntry = {
+  ingredientId: string;
+  ingredientName: string;
+  previousNombre?: string;
+  newNombre?: string;
+  previousCostoEnvase?: number | null;
+  newCostoEnvase?: number | null;
+  previousUnidadesPorEnvase?: number | null;
+  newUnidadesPorEnvase?: number | null;
+  previousCostoUnidad?: number | null;
+  newCostoUnidad?: number | null;
+  previousProveedor?: string;
+  newProveedor?: string;
+  previousMarca?: string;
+  newMarca?: string;
+  changedFields: string[];
+  changedAt: string;
+  changedBy: string;
+  source: "manual" | "import";
+};
+
+type CostingRecipeLine = {
+  id: string;
+  section: CostingSection;
+  ingredientId?: string;
+  ingrediente: string;
+  cantidad: number;
+  unidad?: string;
+  costoUnidad?: number;
+  costoLinea: number;
+};
+
+type CostingRecipe = {
+  id: string;
+  nombre: string;
+  producto: string;
+  rendimientoReceta: number;
+  rendimientoGlaseado: number;
+  costoReceta: number;
+  costoGlaseado: number;
+  costoUnitario: number;
+  lines: CostingRecipeLine[];
+};
+
+type CostingIndirectItem = {
+  id: string;
+  categoria: string;
+  concepto: string;
+  frecuencia: string;
+  costo: number;
+  costoMensual: number;
+};
+
+type CostingData = {
+  importedAt?: string;
+  sourceFileName?: string;
+  ingredients: CostingIngredient[];
+  recipes: CostingRecipe[];
+  indirectCosts: {
+    items: CostingIndirectItem[];
+    monthlyTotal: number;
+    unitsPerMonth: number;
+    overheadPerUnit: number;
+    averageSellingPrice: number;
+    averageIngredientCost: number;
+    expectedGrossProfit: number;
+    expectedNetProfit: number;
+  };
+};
+
 const isISODate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 const normalizeRange = (r: BlockRange): BlockRange => {
@@ -60,12 +143,285 @@ const getAdminAllowlist = (): string[] => {
   return raw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 };
 
-const assertAdmin = (request: any) => {
+const assertAdminEnvOnly = (request: any) => {
   const email = (request.auth?.token?.email || "").toLowerCase();
   if (!email) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   const allowlist = getAdminAllowlist();
   if (!allowlist.includes(email)) throw new HttpsError("permission-denied", "No autorizado.");
   return email;
+};
+
+const assertAdmin = async (request: any) => {
+  try {
+    return assertAdminEnvOnly(request);
+  } catch (err: any) {
+    if (err?.code !== "permission-denied") throw err;
+  }
+
+  const email = (request.auth?.token?.email || "").toLowerCase();
+  if (!email) throw new HttpsError("unauthenticated", "Debes iniciar sesion.");
+
+  const snap = await db.collection("config").doc("admins").get();
+  const firestoreAllowlist = (snap.data()?.emails || []).map((e: any) => String(e).toLowerCase());
+  if (firestoreAllowlist.includes(email)) return email;
+
+  throw new HttpsError("permission-denied", "No autorizado.");
+};
+
+const cleanId = (value: unknown, fallback: string) =>
+  String(value || fallback)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || fallback;
+
+const cleanText = (value: unknown, max = 160) => String(value || "").trim().slice(0, max);
+
+const normalizeIngredientKey = (value: unknown) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+
+const INGREDIENT_ALIASES: Record<string, string> = {
+  "cafe tasters choice": "cafe",
+  "chispas de chocolate": "chispas chocolate",
+  "leche almendra silk": "leche almendra",
+  "leche de soya": "leche soya",
+  "polvo para hornear": "baking powder",
+};
+
+const ingredientLookupKey = (value: unknown) => {
+  const normalized = normalizeIngredientKey(value);
+  return INGREDIENT_ALIASES[normalized] || normalized;
+};
+
+const cleanCostNumber = (value: unknown, field: string, allowZero = true) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || (!allowZero && n <= 0)) {
+    throw new HttpsError("invalid-argument", `Numero invalido: ${field}`);
+  }
+  return Math.round(n * 1_000_000) / 1_000_000;
+};
+
+const normalizeCostingData = (raw: any): CostingData => {
+  if (!raw || typeof raw !== "object") {
+    throw new HttpsError("invalid-argument", "Payload de costeo invalido.");
+  }
+
+  const ingredientsRaw = Array.isArray(raw.ingredients) ? raw.ingredients : [];
+  const recipesRaw = Array.isArray(raw.recipes) ? raw.recipes : [];
+  const indirectRaw = raw.indirectCosts && typeof raw.indirectCosts === "object" ? raw.indirectCosts : {};
+  const indirectItemsRaw = Array.isArray(indirectRaw.items) ? indirectRaw.items : [];
+
+  if (ingredientsRaw.length === 0) throw new HttpsError("invalid-argument", "Faltan ingredientes.");
+  if (recipesRaw.length === 0) throw new HttpsError("invalid-argument", "Faltan recetas.");
+  if (ingredientsRaw.length > 500 || recipesRaw.length > 100) {
+    throw new HttpsError("invalid-argument", "El archivo de costeo es demasiado grande.");
+  }
+
+  const ingredients: CostingIngredient[] = ingredientsRaw.map((item: any, index: number) => {
+    const nombre = cleanText(item.nombre);
+    if (!nombre) throw new HttpsError("invalid-argument", `Ingrediente sin nombre en fila ${index + 1}.`);
+    const unidadesPorEnvase = cleanCostNumber(item.unidadesPorEnvase, `${nombre}.unidadesPorEnvase`, false);
+    const costoEnvase = cleanCostNumber(item.costoEnvase, `${nombre}.costoEnvase`);
+    return {
+      id: cleanId(item.id || nombre, `ingrediente-${index + 1}`),
+      nombre,
+      unidad: cleanText(item.unidad, 24),
+      unidadesPorEnvase,
+      costoEnvase,
+      costoUnidad: Math.round((costoEnvase / unidadesPorEnvase) * 1_000_000) / 1_000_000,
+      proveedor: cleanText(item.proveedor),
+      marca: cleanText(item.marca),
+    };
+  });
+
+  let ingredientById = new Map(ingredients.map((i) => [i.id, i]));
+  const catalogIngredientIds = new Set(ingredients.map((i) => i.id));
+  const rebuildIngredientIdMap = () => {
+    ingredientById = new Map(ingredients.map((i) => [i.id, i]));
+  };
+  const ingredientMatches = (nombre: string) =>
+    ingredients.filter((i) => ingredientLookupKey(i.nombre) === ingredientLookupKey(nombre));
+  const uniqueIngredientId = (value: string, fallback: string) => {
+    const base = cleanId(value, fallback);
+    let id = base;
+    let suffix = 2;
+    while (ingredientById.has(id)) id = `${base}-${suffix++}`;
+    return id;
+  };
+
+  const recipes: CostingRecipe[] = recipesRaw.map((recipe: any, recipeIndex: number) => {
+    const nombre = cleanText(recipe.nombre);
+    if (!nombre) throw new HttpsError("invalid-argument", `Receta sin nombre en posicion ${recipeIndex + 1}.`);
+    const rendimientoReceta = cleanCostNumber(recipe.rendimientoReceta, `${nombre}.rendimientoReceta`, false);
+    const rendimientoGlaseado = cleanCostNumber(recipe.rendimientoGlaseado || recipe.rendimientoReceta, `${nombre}.rendimientoGlaseado`, false);
+    const linesRaw = Array.isArray(recipe.lines) ? recipe.lines : [];
+    if (linesRaw.length === 0) throw new HttpsError("invalid-argument", `La receta ${nombre} no tiene ingredientes.`);
+    if (linesRaw.length > 120) throw new HttpsError("invalid-argument", `La receta ${nombre} tiene demasiadas lineas.`);
+
+    const lines: CostingRecipeLine[] = linesRaw.map((line: any, lineIndex: number) => {
+      const ingrediente = cleanText(line.ingrediente);
+      const section: CostingSection = line.section === "glaseado" ? "glaseado" : "receta";
+      const cantidad = cleanCostNumber(line.cantidad, `${nombre}.${ingrediente}.cantidad`);
+      const fallbackCostoUnidad = cleanCostNumber(line.costoUnidad ?? 0, `${nombre}.${ingrediente}.costoUnidad`);
+      const requested = ingredientById.get(cleanText(line.ingredientId));
+      const matches = ingredientMatches(ingrediente);
+      const catalogMatch = matches.find((i) => catalogIngredientIds.has(i.id));
+      const exactCostMatch = matches.find((i) => Math.abs(i.costoUnidad - fallbackCostoUnidad) < 0.000001);
+      let ingredient = requested || catalogMatch || exactCostMatch;
+
+      if (!ingredient && ingrediente) {
+        ingredient = {
+          id: uniqueIngredientId(ingrediente, `ingrediente-${ingredients.length + 1}`),
+          nombre: ingrediente,
+          unidad: cleanText(line.unidad, 24),
+          unidadesPorEnvase: 1,
+          costoEnvase: fallbackCostoUnidad,
+          costoUnidad: fallbackCostoUnidad,
+          proveedor: "",
+          marca: "",
+        };
+        ingredients.push(ingredient);
+        rebuildIngredientIdMap();
+      }
+
+      const costoUnidad = ingredient?.costoUnidad ?? fallbackCostoUnidad;
+      return {
+        id: cleanId(line.id || `${section}-${ingrediente}-${lineIndex + 1}`, `linea-${lineIndex + 1}`),
+        section,
+        ingredientId: ingredient?.id ?? "",
+        ingrediente: ingredient?.nombre ?? ingrediente,
+        cantidad,
+        unidad: ingredient?.unidad ?? cleanText(line.unidad, 24),
+        costoUnidad,
+        costoLinea: Math.round(cantidad * costoUnidad * 1_000_000) / 1_000_000,
+      };
+    });
+
+    const costoReceta = lines
+      .filter((line) => line.section === "receta")
+      .reduce((sum, line) => sum + line.costoLinea, 0);
+    const costoGlaseado = lines
+      .filter((line) => line.section === "glaseado")
+      .reduce((sum, line) => sum + line.costoLinea, 0);
+    const costoUnitario = (costoReceta / rendimientoReceta) + (costoGlaseado / rendimientoGlaseado);
+
+    return {
+      id: cleanId(recipe.id || nombre, `receta-${recipeIndex + 1}`),
+      nombre,
+      producto: cleanText(recipe.producto || "Donas", 48),
+      rendimientoReceta,
+      rendimientoGlaseado,
+      costoReceta: Math.round(costoReceta * 1_000_000) / 1_000_000,
+      costoGlaseado: Math.round(costoGlaseado * 1_000_000) / 1_000_000,
+      costoUnitario: Math.round(costoUnitario * 1_000_000) / 1_000_000,
+      lines,
+    };
+  });
+
+  const indirectItems: CostingIndirectItem[] = indirectItemsRaw.slice(0, 300).map((item: any, index: number) => ({
+    id: cleanId(item.id || `${item.categoria}-${item.concepto}-${index + 1}`, `indirecto-${index + 1}`),
+    categoria: cleanText(item.categoria || "General", 80),
+    concepto: cleanText(item.concepto, 120),
+    frecuencia: cleanText(item.frecuencia, 40),
+    costo: cleanCostNumber(item.costo ?? 0, `indirecto.${index + 1}.costo`),
+    costoMensual: cleanCostNumber(item.costoMensual ?? 0, `indirecto.${index + 1}.costoMensual`),
+  })).filter((item: CostingIndirectItem) => item.concepto);
+
+  const computedMonthlyTotal = indirectItems.reduce((sum, item) => sum + item.costoMensual, 0);
+  const unitsPerMonth = cleanCostNumber(indirectRaw.unitsPerMonth || 7800, "indirectCosts.unitsPerMonth", false);
+  const monthlyTotal = cleanCostNumber(indirectRaw.monthlyTotal || computedMonthlyTotal, "indirectCosts.monthlyTotal");
+
+  return {
+    importedAt: new Date().toISOString(),
+    sourceFileName: cleanText(raw.sourceFileName || "Costeo Donas 2025.xlsx", 180),
+    ingredients,
+    recipes,
+    indirectCosts: {
+      items: indirectItems,
+      monthlyTotal: Math.round(monthlyTotal * 100) / 100,
+      unitsPerMonth,
+      overheadPerUnit: Math.round((monthlyTotal / unitsPerMonth) * 1_000_000) / 1_000_000,
+      averageSellingPrice: cleanCostNumber(indirectRaw.averageSellingPrice ?? 0, "indirectCosts.averageSellingPrice"),
+      averageIngredientCost: cleanCostNumber(indirectRaw.averageIngredientCost ?? 0, "indirectCosts.averageIngredientCost"),
+      expectedGrossProfit: cleanCostNumber(indirectRaw.expectedGrossProfit ?? 0, "indirectCosts.expectedGrossProfit"),
+      expectedNetProfit: cleanCostNumber(indirectRaw.expectedNetProfit ?? 0, "indirectCosts.expectedNetProfit"),
+    },
+  };
+};
+
+const numberChanged = (a: unknown, b: unknown) =>
+  Math.abs((Number(a) || 0) - (Number(b) || 0)) > 0.000001;
+
+const textChanged = (a: unknown, b: unknown) =>
+  String(a || "").trim() !== String(b || "").trim();
+
+const buildIngredientHistoryEntries = (
+  before: CostingData | null,
+  after: CostingData,
+  changedBy: string,
+  source: "manual" | "import",
+): CostingIngredientHistoryEntry[] => {
+  const beforeById = new Map((before?.ingredients || []).map((ingredient) => [ingredient.id, ingredient]));
+  const changedAt = new Date().toISOString();
+
+  return after.ingredients.flatMap((ingredient) => {
+    const previous = beforeById.get(ingredient.id);
+    if (!previous && !before) return [];
+
+    const changedFields: string[] = [];
+    if (!previous || textChanged(previous.nombre, ingredient.nombre)) changedFields.push("nombre");
+    if (!previous || numberChanged(previous.costoEnvase, ingredient.costoEnvase)) changedFields.push("costoEnvase");
+    if (!previous || numberChanged(previous.unidadesPorEnvase, ingredient.unidadesPorEnvase)) changedFields.push("unidadesPorEnvase");
+    if (!previous || numberChanged(previous.costoUnidad, ingredient.costoUnidad)) changedFields.push("costoUnidad");
+    if (!previous || textChanged(previous.proveedor, ingredient.proveedor)) changedFields.push("proveedor");
+    if (!previous || textChanged(previous.marca, ingredient.marca)) changedFields.push("marca");
+
+    if (changedFields.length === 0) return [];
+
+    return [{
+      ingredientId: ingredient.id,
+      ingredientName: ingredient.nombre,
+      previousNombre: previous?.nombre || "",
+      newNombre: ingredient.nombre,
+      previousCostoEnvase: previous?.costoEnvase ?? null,
+      newCostoEnvase: ingredient.costoEnvase,
+      previousUnidadesPorEnvase: previous?.unidadesPorEnvase ?? null,
+      newUnidadesPorEnvase: ingredient.unidadesPorEnvase,
+      previousCostoUnidad: previous?.costoUnidad ?? null,
+      newCostoUnidad: ingredient.costoUnidad,
+      previousProveedor: previous?.proveedor || "",
+      newProveedor: ingredient.proveedor || "",
+      previousMarca: previous?.marca || "",
+      newMarca: ingredient.marca || "",
+      changedFields,
+      changedAt,
+      changedBy,
+      source,
+    }];
+  });
+};
+
+const writeIngredientHistory = async (entries: CostingIngredientHistoryEntry[]) => {
+  if (entries.length === 0) return;
+
+  for (let i = 0; i < entries.length; i += 450) {
+    const batch = db.batch();
+    entries.slice(i, i + 450).forEach((entry) => {
+      const ref = db.collection("costingIngredientHistory").doc();
+      batch.set(ref, {
+        ...entry,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  }
 };
 
 const calculatePriceServer = (tipoPedido: TipoPedido, puntoVenta: string | undefined, total: number) => {
@@ -146,7 +502,7 @@ export const submitOrder = onCall(async (request) => {
   // ✅ admin override (only if caller is admin)
   let isAdmin = false;
   try {
-    assertAdmin(request);
+    await assertAdmin(request);
     isAdmin = true;
   } catch {
     isAdmin = false;
@@ -265,7 +621,7 @@ export const submitOrder = onCall(async (request) => {
 
 export const adminGetOrders = onCall(async (request) => {
   try {
-    assertAdmin(request);
+    await assertAdmin(request);
 
     const data = (request.data ?? {}) as {
       mode?: "Hoy" | "Mañana" | "Todos";
@@ -350,7 +706,7 @@ export const adminGetOrders = onCall(async (request) => {
 });
 
 export const adminTogglePaid = onCall(async (request) => {
-  assertAdmin(request);
+  await assertAdmin(request);
 
   const data = request.data as { id: string };
   if (!data?.id) throw new HttpsError("invalid-argument", "Falta id");
@@ -371,7 +727,7 @@ export const adminTogglePaid = onCall(async (request) => {
 });
 
 export const adminUpdateSeasonalLabel = onCall(async (request) => {
-  assertAdmin(request);
+  await assertAdmin(request);
 
   logger.info("adminUpdateSeasonalLabel payload", { data: request.data});
 
@@ -392,17 +748,18 @@ export const adminUpdateSeasonalLabel = onCall(async (request) => {
 
 export const getPublicConfig = onCall(async () => {
   const snap = await db.collection("config").doc("app").get();
-
+  // add puntosVenta default
   const defaults = {
     seasonalLabel: "Seasonal",
     blocked: { enabled: false, message: "", ranges: [] as any[] },
+    puntosVenta: [] as string[],
   };
 
   return snap.exists ? { ...defaults, ...snap.data() } : defaults;
 });
 
 export const adminUpdateBlockedDates = onCall(async (request) => {
-  assertAdmin(request);
+  await assertAdmin(request);
 
   const enabled = Boolean(request.data?.enabled);
   const message = String(request.data?.message || "").trim();
@@ -431,7 +788,7 @@ export const adminUpdateBlockedDates = onCall(async (request) => {
 });
 
 export const adminUpdateConfig = onCall(async (request) => {
-  assertAdmin(request);
+  await assertAdmin(request);
 
   const data = (request.data ?? {}) as {
     seasonalLabel?: string;
@@ -440,6 +797,7 @@ export const adminUpdateConfig = onCall(async (request) => {
       message?: string;
       ranges?: Array<{ start: string; end: string }>;
     };
+    puntosVenta?: string[];
   };
 
   const updates: any = {
@@ -488,6 +846,16 @@ export const adminUpdateConfig = onCall(async (request) => {
     };
   }
 
+  // puntosVenta (list of strings)
+  if (Array.isArray(data.puntosVenta)) {
+    const clean = (data.puntosVenta as any[])
+      .map((x) => String(x || "").trim())
+      .filter((s) => s.length > 0)
+      .slice(0, 200); // safety cap
+    const unique = Array.from(new Set(clean));
+    updates.puntosVenta = unique;
+  }
+
   // Prevent empty update payload
   const keys = Object.keys(updates).filter((k) => k !== "updatedAt");
   if (keys.length === 0) {
@@ -503,7 +871,7 @@ export const adminUpdateConfig = onCall(async (request) => {
 });
 
 export const adminDeleteOrder = onCall(async (request) => {
-  assertAdmin(request);
+  await assertAdmin(request);
 
   const id = String(request.data?.id || "").trim();
   if (!id) throw new HttpsError("invalid-argument", "Falta id");
@@ -519,7 +887,7 @@ export const adminDeleteOrder = onCall(async (request) => {
 });
 
 export const adminUpdateOrderQuantities = onCall(async (request) => {
-  assertAdmin(request);
+  await assertAdmin(request);
 
   const data = request.data as { id: string; quantities: Partial<OrderQuantities> };
   if (!data?.id) throw new HttpsError("invalid-argument", "Falta id");
@@ -565,7 +933,94 @@ export const adminUpdateOrderQuantities = onCall(async (request) => {
   return { ok: true, id: data.id, quantities, totalDonas, precioTotal };
 });
 
+export const adminGetCostingData = onCall(async (request) => {
+  await assertAdmin(request);
+
+  const snap = await db.collection("costing").doc("current").get();
+  if (!snap.exists) return { costing: null };
+
+  const costing = { ...(snap.data() || {}) };
+  delete (costing as any).updatedAt;
+  return { costing };
+});
+
+export const adminImportCostingData = onCall(async (request) => {
+  const email = await assertAdmin(request);
+  const costing = normalizeCostingData(request.data);
+  const currentSnap = await db.collection("costing").doc("current").get();
+  const previousCosting = currentSnap.exists ? currentSnap.data() as CostingData : null;
+  const history = buildIngredientHistoryEntries(previousCosting, costing, email, "import");
+
+  await db.collection("costing").doc("current").set({
+    ...costing,
+    importedBy: email,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await writeIngredientHistory(history);
+
+  logger.info("Costing data imported", {
+    email,
+    ingredients: costing.ingredients.length,
+    recipes: costing.recipes.length,
+    historyEntries: history.length,
+    sourceFileName: costing.sourceFileName,
+  });
+
+  return { ok: true, costing };
+});
+
+export const adminSaveCostingData = onCall(async (request) => {
+  const email = await assertAdmin(request);
+  const costing = normalizeCostingData(request.data);
+  const currentSnap = await db.collection("costing").doc("current").get();
+  const previousCosting = currentSnap.exists ? currentSnap.data() as CostingData : null;
+  const history = buildIngredientHistoryEntries(previousCosting, costing, email, "manual");
+
+  await db.collection("costing").doc("current").set({
+    ...costing,
+    editedBy: email,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await writeIngredientHistory(history);
+
+  logger.info("Costing data saved", {
+    email,
+    ingredients: costing.ingredients.length,
+    recipes: costing.recipes.length,
+    historyEntries: history.length,
+  });
+
+  return { ok: true, costing };
+});
+
+export const adminGetIngredientCostHistory = onCall(async (request) => {
+  await assertAdmin(request);
+
+  const ingredientId = cleanText(request.data?.ingredientId, 120);
+  if (!ingredientId) throw new HttpsError("invalid-argument", "Falta ingredientId.");
+
+  const snap = await db.collection("costingIngredientHistory")
+    .where("ingredientId", "==", ingredientId)
+    .get();
+
+  return {
+    history: snap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
+      .sort((a: any, b: any) => String(b.changedAt || "").localeCompare(String(a.changedAt || "")))
+      .slice(0, 100),
+  };
+});
+
 export const adminMe = onCall(async (request) => {
+  try {
+    const allowedEmail = await assertAdmin(request);
+    return { isAdmin: true, email: allowedEmail };
+  } catch (err: any) {
+    if (err?.code !== "permission-denied") throw err;
+  }
+
   const email = String(request.auth?.token?.email || "").toLowerCase();
   if (!email) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
@@ -574,8 +1029,3 @@ export const adminMe = onCall(async (request) => {
 
   return { isAdmin: emails.includes(email), email };
 });
-
-
-
-
-

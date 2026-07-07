@@ -7,6 +7,9 @@ type ConfigPopupProps = {
   open: boolean;
   title?: string;
   subtitle?: string;
+  
+  puntosVenta: string[];
+  setPuntosVenta: (v: string[]) => void;
 
   seasonalLabelInput: string;
   setSeasonalLabelInput: (v: string) => void;
@@ -32,6 +35,9 @@ export default function ConfigPopup({
   open,
   title = "Configuración",
   subtitle = "Cambia el sabor de dona de temporada y bloquea fechas.",
+  
+  puntosVenta,
+  setPuntosVenta,
   seasonalLabelInput,
   setSeasonalLabelInput,
 
@@ -76,7 +82,8 @@ export default function ConfigPopup({
 
   if (!open) return null;
 
-  const canSave = !saving && seasonalLabelInput.trim() && !anyInvalidRange;
+  const anyEmptyPunto = puntosVenta.some((p) => !p || !p.trim());
+  const canSave = !saving && seasonalLabelInput.trim() && !anyInvalidRange && !anyEmptyPunto;
 
   return (
     <div className="fixed inset-0 z-[999]">
@@ -281,6 +288,61 @@ export default function ConfigPopup({
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Puntos de venta */}
+              <div className="bg-stone-50 border border-stone-100 rounded-3xl p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-black text-[#40068B]">Puntos de venta</div>
+                    <div className="text-xs text-stone-500 font-medium mt-1">
+                      Administra la lista que verán los clientes al elegir "Punto de venta".
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPuntosVenta([...puntosVenta, ""])}
+                    className="shrink-0 h-10 px-3 rounded-2xl border font-black text-xs uppercase tracking-widest bg-white text-[#40068B] hover:bg-stone-100"
+                  >
+                    + Agregar
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {puntosVenta.length === 0 ? (
+                    <div className="p-4 rounded-2xl bg-white border border-stone-100 text-stone-400 text-sm font-bold">
+                      No hay puntos de venta configurados.
+                    </div>
+                  ) : (
+                    puntosVenta.map((pv, idx) => (
+                      <div key={idx} className="p-3 bg-white rounded-2xl border border-stone-100 flex gap-2 items-center">
+                        <input
+                          value={pv}
+                          onChange={(e) => {
+                            const next = [...puntosVenta];
+                            next[idx] = e.target.value;
+                            setPuntosVenta(next);
+                          }}
+                          className="flex-1 h-11 px-3 rounded-2xl bg-stone-50 border border-stone-100 font-bold outline-none"
+                          placeholder="Nombre del punto de venta"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setPuntosVenta(puntosVenta.filter((_, i) => i !== idx))}
+                          className="h-11 w-11 rounded-2xl bg-stone-50 border border-stone-100 font-black text-stone-500 hover:bg-stone-100"
+                          title="Eliminar"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <p className="mt-3 text-xs text-stone-400">
+                  Tip: El orden determina cómo aparecen en los selects del cliente.
+                </p>
               </div>
 
               {/* bottom spacer so last inputs aren't tight */}
