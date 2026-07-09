@@ -1025,11 +1025,6 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
           <Link to="/admin">
             <Button variant="outline" size="sm">Volver</Button>
           </Link>
-          {costing && (
-            <Button variant="secondary" size="sm" disabled={saving} onClick={saveCosting}>
-              {saving ? "Guardando..." : "Guardar cambios"}
-            </Button>
-          )}
           <Button size="sm" disabled={importing} onClick={() => inputRef.current?.click()}>
             {importing ? "Importando..." : "Importar Excel"}
           </Button>
@@ -1100,6 +1095,22 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
               </button>
             ))}
           </div>
+
+          {(activeTab === "recetas" || activeTab === "ingredientes") && (
+            <div className="sticky top-3 z-40 bg-white/95 backdrop-blur border border-[#40068B]/10 shadow-lg shadow-[#40068B]/5 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-[#40068B]">
+                  {activeTab === "recetas" ? "Editando recetas" : "Editando ingredientes"}
+                </div>
+                <div className="text-xs font-bold text-stone-400">
+                  Guarda para aplicar los cambios al costeo y actualizar el historial.
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" disabled={saving} onClick={saveCosting}>
+                {saving ? "Guardando..." : "Guardar cambios"}
+              </Button>
+            </div>
+          )}
 
           {activeTab === "resumen" && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
