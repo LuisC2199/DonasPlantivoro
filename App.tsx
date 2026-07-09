@@ -26,6 +26,13 @@ const toSeasonalSlug = (label: string) =>
     .trim();
 
 const seasonalImageSrc = (seasonalLabel: string) => `/images/flavors/${toSeasonalSlug(seasonalLabel)}.png`;
+const visualTestsEnabled = import.meta.env.VITE_VISUAL_TESTS === "true";
+const visualPublicConfig: PublicConfig = {
+  seasonalLabel: "Seasonal",
+  blocked: { enabled: false, message: "", ranges: [] },
+  puntosVenta: ["Tipi'Oka Lomas", "Vegandra"],
+};
+const VisualCostingHarness = React.lazy(() => import("./pages/VisualCostingHarness"));
 
 const isDateBlocked = ( iso: string, ranges: Array<{ start: string; end: string }>) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
@@ -1543,9 +1550,16 @@ const AdminConsole = ({ publicConfig, refreshConfig, }: { publicConfig: PublicCo
 // --- App Root ---
 
 export default function App() {
-  const [publicConfig, setPublicConfig] = useState<PublicConfig | null>(null);
+  const [publicConfig, setPublicConfig] = useState<PublicConfig | null>(
+    visualTestsEnabled ? visualPublicConfig : null
+  );
 
   const refreshConfig = async () => {
+    if (visualTestsEnabled) {
+      setPublicConfig(visualPublicConfig);
+      return visualPublicConfig;
+    }
+
     const cfg = await getPublicConfig();
     setPublicConfig(cfg); // ✅ store full config
     return cfg;
@@ -1573,6 +1587,17 @@ export default function App() {
 
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/denied" element={<AdminDenied />} />
+
+        {visualTestsEnabled && (
+          <Route
+            path="/__visual/costeo"
+            element={
+              <React.Suspense fallback={<div className="p-8 font-black text-[#40068B]">Cargando visual...</div>}>
+                <VisualCostingHarness />
+              </React.Suspense>
+            }
+          />
+        )}
 
         <Route
           path="/admin"

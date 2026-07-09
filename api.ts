@@ -184,3 +184,8 @@ export const adminGetIngredientCostHistory = async (ingredientId: string) => {
   return res.data as { history: CostingIngredientHistoryEntry[] };
 };
 
+export const adminGetCostingHistory = async () => {
+  const fn = httpsCallable(functions, "adminGetCostingHistory");
+  const res = await fn();
+  return res.data as { history: CostingIngredientHistoryEntry[] };
+};

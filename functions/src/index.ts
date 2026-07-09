@@ -1013,6 +1013,22 @@ export const adminGetIngredientCostHistory = onCall(async (request) => {
   };
 });
 
+export const adminGetCostingHistory = onCall(async (request) => {
+  await assertAdmin(request);
+
+  const snap = await db.collection("costingIngredientHistory")
+    .orderBy("changedAt", "desc")
+    .limit(500)
+    .get();
+
+  return {
+    history: snap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })),
+  };
+});
+
 export const adminMe = onCall(async (request) => {
   try {
     const allowedEmail = await assertAdmin(request);

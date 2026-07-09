@@ -1,7 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
-import { adminGetCostingData, adminGetIngredientCostHistory, adminImportCostingData, adminSaveCostingData } from "../api";
+import { adminGetCostingData, adminGetCostingHistory, adminGetIngredientCostHistory, adminImportCostingData, adminSaveCostingData } from "../api";
 import { Button } from "../components/Button";
 import type {
   CostingData,
@@ -120,6 +120,46 @@ const isDuplicateWorkbookRecipe = (recipe: CostingRecipe) => {
 };
 
 const roundCost = (value: number) => Math.round((Number(value) || 0) * 1_000_000) / 1_000_000;
+
+const percent = (value: number) =>
+  `${value > 0 ? "+" : ""}${value.toLocaleString("es-MX", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`;
+
+const formatDate = (value?: string) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+const daysAgo = (days: number) => {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date;
+};
+
+const csvCell = (value: unknown) => {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const downloadTextFile = (fileName: string, text: string, type = "text/csv;charset=utf-8") => {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const historyUnitDelta = (entry: CostingIngredientHistoryEntry) =>
+  (Number(entry.newCostoUnidad) || 0) - (Number(entry.previousCostoUnidad) || 0);
+
+const historyPercentDelta = (entry: CostingIngredientHistoryEntry) => {
+  const previous = Number(entry.previousCostoUnidad) || 0;
+  if (!previous) return 0;
+  return (historyUnitDelta(entry) / previous) * 100;
+};
 
 const recalculateCosting = (costing: CostingData): CostingData => {
   const ingredients = costing.ingredients.map((ingredient) => ({
@@ -400,9 +440,14 @@ const parseCostingWorkbook = (fileName: string, buffer: ArrayBuffer): CostingDat
   };
 };
 
-export default function AdminCosting() {
-  const [costing, setCosting] = React.useState<CostingData | null>(null);
-  const [loading, setLoading] = React.useState(true);
+type AdminCostingProps = {
+  initialCosting?: CostingData | null;
+  initialHistory?: CostingIngredientHistoryEntry[];
+};
+
+export default function AdminCosting({ initialCosting, initialHistory = [] }: AdminCostingProps = {}) {
+  const [costing, setCosting] = React.useState<CostingData | null>(initialCosting ?? null);
+  const [loading, setLoading] = React.useState(initialCosting === undefined);
   const [importing, setImporting] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -411,8 +456,11 @@ export default function AdminCosting() {
   const [recipeModalOpen, setRecipeModalOpen] = React.useState(false);
   const [historyIngredient, setHistoryIngredient] = React.useState<CostingIngredient | null>(null);
   const [historyEntries, setHistoryEntries] = React.useState<CostingIngredientHistoryEntry[]>([]);
+  const [allHistoryEntries, setAllHistoryEntries] = React.useState<CostingIngredientHistoryEntry[]>(initialHistory);
   const [historyLoading, setHistoryLoading] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<"resumen" | "recetas" | "ingredientes" | "indirectos">("resumen");
+  const [allHistoryLoading, setAllHistoryLoading] = React.useState(false);
+  const [trendIngredientId, setTrendIngredientId] = React.useState("");
+  const [activeTab, setActiveTab] = React.useState<"resumen" | "recetas" | "ingredientes" | "historial" | "indirectos">("resumen");
   const [inlineIngredient, setInlineIngredient] = React.useState({
     nombre: "",
     unidad: "g",
@@ -424,6 +472,12 @@ export default function AdminCosting() {
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const load = React.useCallback(async () => {
+    if (initialCosting !== undefined) {
+      setCosting(initialCosting);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
@@ -434,11 +488,37 @@ export default function AdminCosting() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [initialCosting]);
 
   React.useEffect(() => {
     load();
   }, [load]);
+
+  const loadAllHistory = React.useCallback(async () => {
+    if (initialHistory.length > 0) {
+      setAllHistoryEntries(initialHistory);
+      return;
+    }
+
+    setAllHistoryLoading(true);
+    setError("");
+
+    try {
+      const res = await adminGetCostingHistory();
+      setAllHistoryEntries(res.history);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "No se pudo cargar el historial de costos.");
+    } finally {
+      setAllHistoryLoading(false);
+    }
+  }, [initialHistory]);
+
+  React.useEffect(() => {
+    if (activeTab === "historial" && allHistoryEntries.length === 0 && !allHistoryLoading) {
+      loadAllHistory();
+    }
+  }, [activeTab, allHistoryEntries.length, allHistoryLoading, loadAllHistory]);
 
   const sortedRecipes = React.useMemo(
     () => [...(costing?.recipes ?? [])]
@@ -471,6 +551,115 @@ export default function AdminCosting() {
     () => costing?.recipes.find((recipe) => recipe.id === selectedRecipeId) ?? null,
     [costing, selectedRecipeId],
   );
+
+  const ingredientById = React.useMemo(
+    () => new Map((costing?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient])),
+    [costing],
+  );
+
+  const recentHistoryEntries = React.useMemo(() => {
+    const cutoff = daysAgo(30).getTime();
+    return allHistoryEntries.filter((entry) => {
+      const time = new Date(entry.changedAt).getTime();
+      return Number.isFinite(time) && time >= cutoff;
+    });
+  }, [allHistoryEntries]);
+
+  const recentAverageUnitDelta = React.useMemo(() => {
+    if (recentHistoryEntries.length === 0) return 0;
+    return recentHistoryEntries.reduce((sum, entry) => sum + historyUnitDelta(entry), 0) / recentHistoryEntries.length;
+  }, [recentHistoryEntries]);
+
+  const latestHistoryByIngredient = React.useMemo(() => {
+    const latest = new Map<string, CostingIngredientHistoryEntry>();
+    [...allHistoryEntries]
+      .sort((a, b) => String(b.changedAt || "").localeCompare(String(a.changedAt || "")))
+      .forEach((entry) => {
+        if (!latest.has(entry.ingredientId)) latest.set(entry.ingredientId, entry);
+      });
+    return Array.from(latest.values());
+  }, [allHistoryEntries]);
+
+  const biggestIncreases = React.useMemo(
+    () => latestHistoryByIngredient
+      .filter((entry) => historyUnitDelta(entry) > 0)
+      .sort((a, b) => historyPercentDelta(b) - historyPercentDelta(a))
+      .slice(0, 5),
+    [latestHistoryByIngredient],
+  );
+
+  const biggestDecreases = React.useMemo(
+    () => latestHistoryByIngredient
+      .filter((entry) => historyUnitDelta(entry) < 0)
+      .sort((a, b) => historyPercentDelta(a) - historyPercentDelta(b))
+      .slice(0, 5),
+    [latestHistoryByIngredient],
+  );
+
+  const recipeImpacts = React.useMemo(() => {
+    const latestDeltaByIngredient = new Map(
+      latestHistoryByIngredient.map((entry) => [entry.ingredientId, historyUnitDelta(entry)]),
+    );
+
+    return sortedRecipes
+      .map((recipe) => {
+        const delta = recipe.lines.reduce((sum, line) => {
+          const unitDelta = latestDeltaByIngredient.get(line.ingredientId || "") || 0;
+          const rendimiento = line.section === "glaseado" ? recipe.rendimientoGlaseado : recipe.rendimientoReceta;
+          return sum + ((Number(line.cantidad) || 0) * unitDelta) / (Number(rendimiento) || 1);
+        }, 0);
+        return {
+          recipe,
+          previousUnitCost: recipe.costoUnitario - delta,
+          currentUnitCost: recipe.costoUnitario,
+          delta,
+        };
+      })
+      .filter((item) => Math.abs(item.delta) > 0.000001)
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 8);
+  }, [latestHistoryByIngredient, sortedRecipes]);
+
+  const trendOptions = React.useMemo(
+    () => latestHistoryByIngredient
+      .map((entry) => ingredientById.get(entry.ingredientId) || {
+        id: entry.ingredientId,
+        nombre: entry.ingredientName,
+        unidad: "",
+        unidadesPorEnvase: 0,
+        costoEnvase: 0,
+        costoUnidad: Number(entry.newCostoUnidad) || 0,
+      })
+      .sort((a, b) => a.nombre.localeCompare(b.nombre)),
+    [ingredientById, latestHistoryByIngredient],
+  );
+
+  React.useEffect(() => {
+    if (!trendIngredientId && trendOptions.length > 0) {
+      setTrendIngredientId(trendOptions[0].id);
+    }
+  }, [trendIngredientId, trendOptions]);
+
+  const trendEntries = React.useMemo(() => {
+    const entries = allHistoryEntries
+      .filter((entry) => entry.ingredientId === trendIngredientId)
+      .sort((a, b) => String(a.changedAt || "").localeCompare(String(b.changedAt || "")));
+    const current = ingredientById.get(trendIngredientId);
+    if (current && entries.length > 0) {
+      return [
+        ...entries,
+        {
+          ...entries[entries.length - 1],
+          id: "actual",
+          changedAt: new Date().toISOString(),
+          previousCostoUnidad: entries[entries.length - 1].newCostoUnidad,
+          newCostoUnidad: current.costoUnidad,
+          source: "manual" as const,
+        },
+      ];
+    }
+    return entries;
+  }, [allHistoryEntries, ingredientById, trendIngredientId]);
 
   const updateCosting = (updater: (current: CostingData) => CostingData) => {
     setMessage("");
@@ -526,6 +715,12 @@ export default function AdminCosting() {
     setHistoryEntries([]);
     setHistoryLoading(true);
     setError("");
+
+    if (initialHistory.length > 0) {
+      setHistoryEntries(initialHistory.filter((entry) => entry.ingredientId === ingredient.id));
+      setHistoryLoading(false);
+      return;
+    }
 
     try {
       const res = await adminGetIngredientCostHistory(ingredient.id);
@@ -730,6 +925,7 @@ export default function AdminCosting() {
       const res = await adminSaveCostingData(recalculateCosting(costing));
       setCosting(res.costing);
       setMessage("Costeo guardado.");
+      if (allHistoryEntries.length > 0 || activeTab === "historial") void loadAllHistory();
     } catch (e: any) {
       console.error(e);
       setError(e?.message || "No se pudo guardar el costeo.");
@@ -750,6 +946,7 @@ export default function AdminCosting() {
       const parsed = parseCostingWorkbook(file.name, buffer);
       const res = await adminImportCostingData(parsed);
       setCosting(res.costing);
+      if (allHistoryEntries.length > 0 || activeTab === "historial") void loadAllHistory();
     } catch (e: any) {
       console.error(e);
       setError(e?.message || "No se pudo importar el archivo.");
@@ -757,6 +954,45 @@ export default function AdminCosting() {
       setImporting(false);
       if (event.target) event.target.value = "";
     }
+  };
+
+  const exportCostHistory = () => {
+    const headers = [
+      "fecha",
+      "ingrediente",
+      "campos",
+      "costo_envase_anterior",
+      "costo_envase_nuevo",
+      "unidades_envase_anterior",
+      "unidades_envase_nuevo",
+      "costo_unidad_anterior",
+      "costo_unidad_nuevo",
+      "proveedor_anterior",
+      "proveedor_nuevo",
+      "marca_anterior",
+      "marca_nueva",
+      "origen",
+      "admin",
+    ];
+    const rows = allHistoryEntries.map((entry) => [
+      entry.changedAt,
+      entry.ingredientName,
+      entry.changedFields.join("|"),
+      entry.previousCostoEnvase ?? "",
+      entry.newCostoEnvase ?? "",
+      entry.previousUnidadesPorEnvase ?? "",
+      entry.newUnidadesPorEnvase ?? "",
+      entry.previousCostoUnidad ?? "",
+      entry.newCostoUnidad ?? "",
+      entry.previousProveedor || "",
+      entry.newProveedor || "",
+      entry.previousMarca || "",
+      entry.newMarca || "",
+      entry.source,
+      entry.changedBy,
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+    downloadTextFile(`historial-costos-${new Date().toISOString().slice(0, 10)}.csv`, csv);
   };
 
   if (loading) {
@@ -842,6 +1078,7 @@ export default function AdminCosting() {
               ["resumen", "Resumen"],
               ["recetas", "Recetas"],
               ["ingredientes", "Ingredientes"],
+              ["historial", "Historial"],
               ["indirectos", "Indirectos"],
             ].map(([key, label]) => (
               <button
@@ -1086,6 +1323,201 @@ export default function AdminCosting() {
                 </tbody>
               </table>
             </div>
+          </section>
+          )}
+
+          {activeTab === "historial" && (
+          <section className="space-y-6">
+            <div className="bg-white border border-stone-100 rounded-[2rem] p-6">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
+                <div>
+                  <h2 className="text-xl font-black text-[#40068B]">Historial de costos</h2>
+                  <p className="text-xs font-bold text-stone-400 mt-1">
+                    Cambios guardados por ingrediente, impacto estimado en recetas y exportacion.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" disabled={allHistoryLoading} onClick={loadAllHistory}>
+                    {allHistoryLoading ? "Cargando..." : "Actualizar"}
+                  </Button>
+                  <Button variant="secondary" size="sm" disabled={allHistoryEntries.length === 0} onClick={exportCostHistory}>
+                    Exportar CSV
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="rounded-2xl bg-stone-50 border border-stone-100 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-stone-400">Cambios registrados</div>
+                  <div className="mt-2 text-3xl font-black text-stone-900">{allHistoryEntries.length}</div>
+                </div>
+                <div className="rounded-2xl bg-stone-50 border border-stone-100 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-stone-400">Cambio prom. 30 dias</div>
+                  <div className={`mt-2 text-3xl font-black ${recentAverageUnitDelta >= 0 ? "text-red-600" : "text-[#168a55]"}`}>
+                    {recentAverageUnitDelta >= 0 ? "+" : "-"}${money(Math.abs(recentAverageUnitDelta))}
+                  </div>
+                  <div className="text-xs font-bold text-stone-400">{recentHistoryEntries.length} cambios</div>
+                </div>
+                <div className="rounded-2xl bg-stone-50 border border-stone-100 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-stone-400">Mayor subida</div>
+                  <div className="mt-2 text-2xl font-black text-red-600">
+                    {biggestIncreases[0] ? percent(historyPercentDelta(biggestIncreases[0])) : "0.0%"}
+                  </div>
+                  <div className="text-xs font-bold text-stone-400 truncate">{biggestIncreases[0]?.ingredientName || "Sin datos"}</div>
+                </div>
+                <div className="rounded-2xl bg-stone-50 border border-stone-100 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-stone-400">Mayor bajada</div>
+                  <div className="mt-2 text-2xl font-black text-[#28CD7E]">
+                    {biggestDecreases[0] ? percent(historyPercentDelta(biggestDecreases[0])) : "0.0%"}
+                  </div>
+                  <div className="text-xs font-bold text-stone-400 truncate">{biggestDecreases[0]?.ingredientName || "Sin datos"}</div>
+                </div>
+              </div>
+            </div>
+
+            {allHistoryEntries.length === 0 && !allHistoryLoading ? (
+              <div className="rounded-[2rem] bg-white border border-stone-100 p-8 text-center">
+                <div className="font-black text-stone-900">Todavia no hay historial</div>
+                <p className="mt-2 text-sm font-bold text-stone-500">
+                  Guarda un cambio de costo, envase, proveedor o marca para empezar a ver tendencias.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <section className="bg-white border border-stone-100 rounded-[2rem] p-6">
+                    <h3 className="text-lg font-black text-[#40068B] mb-4">Ingredientes que mas subieron</h3>
+                    <div className="space-y-3">
+                      {biggestIncreases.length === 0 ? (
+                        <div className="text-sm font-bold text-stone-400">Sin subidas registradas.</div>
+                      ) : biggestIncreases.map((entry) => (
+                        <div key={entry.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-red-50 border border-red-100">
+                          <div className="min-w-0">
+                            <div className="font-black text-stone-900 truncate">{entry.ingredientName}</div>
+                            <div className="text-xs font-bold text-stone-500">{formatDate(entry.changedAt)}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-black text-red-600">{percent(historyPercentDelta(entry))}</div>
+                            <div className="text-xs font-bold text-stone-500">
+                              ${money(entry.previousCostoUnidad ?? 0)} a ${money(entry.newCostoUnidad ?? 0)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="bg-white border border-stone-100 rounded-[2rem] p-6">
+                    <h3 className="text-lg font-black text-[#40068B] mb-4">Ingredientes que bajaron</h3>
+                    <div className="space-y-3">
+                      {biggestDecreases.length === 0 ? (
+                        <div className="text-sm font-bold text-stone-400">Sin bajadas registradas.</div>
+                      ) : biggestDecreases.map((entry) => (
+                        <div key={entry.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-[#28CD7E]/10 border border-[#28CD7E]/20">
+                          <div className="min-w-0">
+                            <div className="font-black text-stone-900 truncate">{entry.ingredientName}</div>
+                            <div className="text-xs font-bold text-stone-500">{formatDate(entry.changedAt)}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-black text-[#168a55]">{percent(historyPercentDelta(entry))}</div>
+                            <div className="text-xs font-bold text-stone-500">
+                              ${money(entry.previousCostoUnidad ?? 0)} a ${money(entry.newCostoUnidad ?? 0)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+
+                <section className="bg-white border border-stone-100 rounded-[2rem] p-6">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                    <div>
+                      <h3 className="text-lg font-black text-[#40068B]">Tendencia por ingrediente</h3>
+                      <p className="text-xs font-bold text-stone-400 mt-1">Costo por unidad a traves del tiempo.</p>
+                    </div>
+                    <select
+                      value={trendIngredientId}
+                      onChange={(e) => setTrendIngredientId(e.target.value)}
+                      className="h-11 px-4 rounded-xl bg-stone-50 border border-stone-100 font-black text-sm outline-none"
+                    >
+                      {trendOptions.map((ingredient) => (
+                        <option key={ingredient.id} value={ingredient.id}>{ingredient.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="h-64 rounded-2xl bg-stone-50 border border-stone-100 p-4">
+                    {trendEntries.length < 2 ? (
+                      <div className="h-full flex items-center justify-center text-sm font-bold text-stone-400">
+                        Se necesitan al menos dos puntos para graficar una tendencia.
+                      </div>
+                    ) : (
+                      <svg viewBox="0 0 640 220" className="w-full h-full" role="img" aria-label="Tendencia de costo">
+                        {(() => {
+                          const values = trendEntries.map((entry) => Number(entry.newCostoUnidad) || 0);
+                          const min = Math.min(...values);
+                          const max = Math.max(...values);
+                          const spread = max - min || 1;
+                          const points = values.map((value, index) => {
+                            const x = 24 + (index * 592) / Math.max(values.length - 1, 1);
+                            const y = 184 - ((value - min) / spread) * 148;
+                            return { x, y, value, entry: trendEntries[index] };
+                          });
+                          const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+                          return (
+                            <>
+                              <line x1="24" y1="184" x2="616" y2="184" stroke="#e7e5e4" strokeWidth="2" />
+                              <line x1="24" y1="36" x2="24" y2="184" stroke="#e7e5e4" strokeWidth="2" />
+                              <path d={path} fill="none" stroke="#40068B" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+                              {points.map((point) => (
+                                <g key={`${point.entry.id}-${point.x}`}>
+                                  <circle cx={point.x} cy={point.y} r="5" fill="#28CD7E" stroke="white" strokeWidth="3" />
+                                  <text x={point.x} y={point.y - 12} textAnchor="middle" fontSize="12" fontWeight="800" fill="#40068B">
+                                    ${money(point.value)}
+                                  </text>
+                                </g>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </svg>
+                    )}
+                  </div>
+                </section>
+
+                <section className="bg-white border border-stone-100 rounded-[2rem] p-6 overflow-hidden">
+                  <h3 className="text-lg font-black text-[#40068B] mb-4">Impacto estimado en recetas</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[720px]">
+                      <thead>
+                        <tr className="text-left text-[10px] uppercase tracking-widest text-stone-400 border-b">
+                          <th className="py-3 pr-4">Receta</th>
+                          <th className="py-3 pr-4 text-right">Antes</th>
+                          <th className="py-3 pr-4 text-right">Actual</th>
+                          <th className="py-3 text-right">Cambio por unidad</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recipeImpacts.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="py-5 text-center font-bold text-stone-400">Sin impacto estimado todavía.</td>
+                          </tr>
+                        ) : recipeImpacts.map((item) => (
+                          <tr key={item.recipe.id} className="border-b border-stone-100 last:border-0">
+                            <td className="py-3 pr-4 font-black text-stone-800">{recipeDisplayName(item.recipe)}</td>
+                            <td className="py-3 pr-4 text-right font-bold">${money(item.previousUnitCost)}</td>
+                            <td className="py-3 pr-4 text-right font-bold">${money(item.currentUnitCost)}</td>
+                            <td className={`py-3 text-right font-black ${item.delta >= 0 ? "text-red-600" : "text-[#168a55]"}`}>
+                              {item.delta >= 0 ? "+" : "-"}${money(Math.abs(item.delta))}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </>
+            )}
           </section>
           )}
 
