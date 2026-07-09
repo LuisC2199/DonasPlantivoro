@@ -459,6 +459,7 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
   const [allHistoryEntries, setAllHistoryEntries] = React.useState<CostingIngredientHistoryEntry[]>(initialHistory);
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [allHistoryLoading, setAllHistoryLoading] = React.useState(false);
+  const [allHistoryLoaded, setAllHistoryLoaded] = React.useState(initialHistory.length > 0);
   const [trendIngredientId, setTrendIngredientId] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"resumen" | "recetas" | "ingredientes" | "historial" | "indirectos">("resumen");
   const [inlineIngredient, setInlineIngredient] = React.useState({
@@ -497,6 +498,7 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
   const loadAllHistory = React.useCallback(async () => {
     if (initialHistory.length > 0) {
       setAllHistoryEntries(initialHistory);
+      setAllHistoryLoaded(true);
       return;
     }
 
@@ -510,15 +512,16 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
       console.error(e);
       setError(e?.message || "No se pudo cargar el historial de costos.");
     } finally {
+      setAllHistoryLoaded(true);
       setAllHistoryLoading(false);
     }
   }, [initialHistory]);
 
   React.useEffect(() => {
-    if (activeTab === "historial" && allHistoryEntries.length === 0 && !allHistoryLoading) {
+    if (activeTab === "historial" && !allHistoryLoaded && !allHistoryLoading) {
       loadAllHistory();
     }
-  }, [activeTab, allHistoryEntries.length, allHistoryLoading, loadAllHistory]);
+  }, [activeTab, allHistoryLoaded, allHistoryLoading, loadAllHistory]);
 
   const sortedRecipes = React.useMemo(
     () => [...(costing?.recipes ?? [])]
@@ -1002,6 +1005,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 min-h-screen">
       <input
+        id="costeo-excel-import"
+        name="costeo-excel-import"
         ref={inputRef}
         type="file"
         className="hidden"
@@ -1253,6 +1258,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                       <tr key={ingredient.id} className="border-b border-stone-100 last:border-0">
                         <td className="py-2 pr-3">
                           <input
+                            id={`costeo-ingredient-${ingredient.id}-nombre`}
+                            name={`costeo-ingredient-${ingredient.id}-nombre`}
                             value={ingredient.nombre}
                             onChange={(e) => updateIngredient(ingredient.id, { nombre: e.target.value })}
                             className="w-full h-10 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1260,6 +1267,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                         </td>
                         <td className="py-2 pr-3">
                           <input
+                            id={`costeo-ingredient-${ingredient.id}-unidad`}
+                            name={`costeo-ingredient-${ingredient.id}-unidad`}
                             value={ingredient.unidad}
                             onChange={(e) => updateIngredient(ingredient.id, { unidad: e.target.value })}
                             className="w-24 h-10 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1267,6 +1276,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                         </td>
                         <td className="py-2 pr-3">
                           <input
+                            id={`costeo-ingredient-${ingredient.id}-unidades-envase`}
+                            name={`costeo-ingredient-${ingredient.id}-unidades-envase`}
                             type="number"
                             min="0"
                             value={ingredient.unidadesPorEnvase}
@@ -1276,6 +1287,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                         </td>
                         <td className="py-2 pr-3">
                           <input
+                            id={`costeo-ingredient-${ingredient.id}-costo-envase`}
+                            name={`costeo-ingredient-${ingredient.id}-costo-envase`}
                             type="number"
                             min="0"
                             value={ingredient.costoEnvase}
@@ -1288,6 +1301,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                         </td>
                         <td className="py-2 pr-3">
                           <input
+                            id={`costeo-ingredient-${ingredient.id}-proveedor`}
+                            name={`costeo-ingredient-${ingredient.id}-proveedor`}
                             value={ingredient.proveedor || ""}
                             onChange={(e) => updateIngredient(ingredient.id, { proveedor: e.target.value })}
                             className="w-full h-10 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1295,6 +1310,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                         </td>
                         <td className="py-2 pr-3">
                           <input
+                            id={`costeo-ingredient-${ingredient.id}-marca`}
+                            name={`costeo-ingredient-${ingredient.id}-marca`}
                             value={ingredient.marca || ""}
                             onChange={(e) => updateIngredient(ingredient.id, { marca: e.target.value })}
                             className="w-full h-10 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1437,6 +1454,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                       <p className="text-xs font-bold text-stone-400 mt-1">Costo por unidad a traves del tiempo.</p>
                     </div>
                     <select
+                      id="costeo-trend-ingredient"
+                      name="costeo-trend-ingredient"
                       value={trendIngredientId}
                       onChange={(e) => setTrendIngredientId(e.target.value)}
                       className="h-11 px-4 rounded-xl bg-stone-50 border border-stone-100 font-black text-sm outline-none"
@@ -1683,6 +1702,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                       Receta
                     </span>
                     <select
+                      id="costeo-selected-recipe"
+                      name="costeo-selected-recipe"
                       value={selectedRecipeId}
                       onChange={(e) => setSelectedRecipeId(e.target.value)}
                       className="w-full h-11 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1699,6 +1720,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                       Nombre
                     </span>
                     <input
+                      id={`costeo-recipe-${selectedRecipe.id}-nombre`}
+                      name={`costeo-recipe-${selectedRecipe.id}-nombre`}
                       value={recipeDisplayName(selectedRecipe)}
                       onChange={(e) => updateRecipe(selectedRecipe.id, { nombre: e.target.value })}
                       className="w-full h-11 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1709,6 +1732,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                       Rend. receta
                     </span>
                     <input
+                      id={`costeo-recipe-${selectedRecipe.id}-rendimiento-receta`}
+                      name={`costeo-recipe-${selectedRecipe.id}-rendimiento-receta`}
                       type="number"
                       min="1"
                       value={selectedRecipe.rendimientoReceta}
@@ -1721,6 +1746,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                       Rend. glaseado
                     </span>
                     <input
+                      id={`costeo-recipe-${selectedRecipe.id}-rendimiento-glaseado`}
+                      name={`costeo-recipe-${selectedRecipe.id}-rendimiento-glaseado`}
                       type="number"
                       min="1"
                       value={selectedRecipe.rendimientoGlaseado}
@@ -1753,6 +1780,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           Nuevo ingrediente
                         </span>
                         <input
+                          id="costeo-inline-ingredient-nombre"
+                          name="costeo-inline-ingredient-nombre"
                           value={inlineIngredient.nombre}
                           onChange={(e) => setInlineIngredient((prev) => ({ ...prev, nombre: e.target.value }))}
                           className="w-full h-10 px-3 rounded-xl bg-white border border-stone-100 font-bold outline-none"
@@ -1764,6 +1793,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           Unidad
                         </span>
                         <input
+                          id="costeo-inline-ingredient-unidad"
+                          name="costeo-inline-ingredient-unidad"
                           value={inlineIngredient.unidad}
                           onChange={(e) => setInlineIngredient((prev) => ({ ...prev, unidad: e.target.value }))}
                           className="w-full h-10 px-3 rounded-xl bg-white border border-stone-100 font-bold outline-none"
@@ -1774,6 +1805,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           Envase
                         </span>
                         <input
+                          id="costeo-inline-ingredient-unidades-envase"
+                          name="costeo-inline-ingredient-unidades-envase"
                           type="number"
                           min="0"
                           value={inlineIngredient.unidadesPorEnvase}
@@ -1786,6 +1819,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           Costo
                         </span>
                         <input
+                          id="costeo-inline-ingredient-costo-envase"
+                          name="costeo-inline-ingredient-costo-envase"
                           type="number"
                           min="0"
                           value={inlineIngredient.costoEnvase}
@@ -1798,6 +1833,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           Proveedor
                         </span>
                         <input
+                          id="costeo-inline-ingredient-proveedor"
+                          name="costeo-inline-ingredient-proveedor"
                           value={inlineIngredient.proveedor}
                           onChange={(e) => setInlineIngredient((prev) => ({ ...prev, proveedor: e.target.value }))}
                           className="w-full h-10 px-3 rounded-xl bg-white border border-stone-100 font-bold outline-none"
@@ -1845,6 +1882,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                         <tr key={line.id} className="border-b border-stone-100 last:border-0">
                           <td className="py-2 pr-3">
                             <select
+                              id={`costeo-line-${line.id}-section`}
+                              name={`costeo-line-${line.id}-section`}
                               value={line.section}
                               onChange={(e) => updateRecipeLine(selectedRecipe.id, line.id, { section: e.target.value as CostingSection })}
                               className="w-32 h-10 px-3 rounded-xl bg-stone-50 border border-stone-100 font-bold outline-none"
@@ -1855,6 +1894,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           </td>
                           <td className="py-2 pr-3">
                             <select
+                              id={`costeo-line-${line.id}-ingredient`}
+                              name={`costeo-line-${line.id}-ingredient`}
                               value={line.ingredientId || ""}
                               onChange={(e) => {
                                 const ingredient = costing.ingredients.find((item) => item.id === e.target.value);
@@ -1877,6 +1918,8 @@ export default function AdminCosting({ initialCosting, initialHistory = [] }: Ad
                           </td>
                           <td className="py-2 pr-3">
                             <input
+                              id={`costeo-line-${line.id}-cantidad`}
+                              name={`costeo-line-${line.id}-cantidad`}
                               type="number"
                               min="0"
                               value={line.cantidad}
